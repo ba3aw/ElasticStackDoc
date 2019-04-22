@@ -1,0 +1,404 @@
+Main Header
+===========
+:Author:    Abdelkarim FITOURI
+:Email:     <abdelkarim.fitouri@gmail.com>
+:Date:      04/22/2019
+:Revision:  V1.0.0
+
+IMPORTANT: This document explain how to setup an Elastic Stack with Only one server hosting all the stack (ElasticSearch, Logstash and Kibana)
+
+IMPORTANT: The OS used here is Ubuntu 18.04
+
+== Elastic Stack installation and configuration
+
+
+* Connect using ssh to the server which will host the Elastic Stack.
+
+
+=== JDK 8 Installation
+
+
+* Execute the bellow command line
+- sudo apt install openjdk-8-jdk
+* To check the version of the installed java:
+- java -version
+
+=== ElasticSearch Installation
+
+
+* Execute the bellow command lines
+- sudo wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+- sudo echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+- sudo apt-get update
+- sudo apt install elasticsearch
+
+
+* Modify the configuration like bellow
+==========================
+admin@sv-elk:~# sudo cat /etc/elasticsearch/elasticsearch.yml | grep -v "^#"
+
+cluster.name: prods-logs-elk
+
+node.name: sv-elk
+
+path.data: /var/lib/elasticsearch
+
+path.logs: /var/log/elasticsearch
+
+network.host: localhost
+==========================
+
+
+* Start the elasticSearch service
+- sudo systemctl enable elasticsearch.service 
+- sudo systemctl start elasticsearch.service
+
+=== ElasticSearch Tunning
+
+
+==== Required File Descriptor limit
+
+
+* Check the actual File Descriptor limit:
+==========================
+admin@sv-elk:~# sudo curl "http://127.0.0.1:9200/_nodes/stats/process?filter_path=**.max_file_descriptors&pretty=true"
+{
+  "nodes" : {
+    "ySst55NeTGGP8ihvYXlvAw" : {
+      "process" : {
+        "max_file_descriptors" : 65535
+      }
+    }
+  }
+}
+==========================
+* If max_file_descriptors is less than 65535, set *nofile* to 65535 in /etc/security/limits.conf
+
+
+==== Required Virtual Memory
+
+
+* Check the actual configured virtual memory using the root user:
+==========================
+root@sv-elk:~# sysctl vm.max_map_count
+vm.max_map_count = 262144
+==========================
+
+* If vm.max_map_count is less than 262144, execute the bellow command line:
+- sysctl -w vm.max_map_count=262144 ; echo "vm.max_map_count=262144" >> /etc/sysctl.conf
+
+
+==== Required number of threads
+
+
+* Check the actual number of thread using the root user,
+==========================
+root@sv-elk:~# ulimit -u
+64061
+==========================
+
+* Number of thread should be at least 4096, if not increase *uproc* limit on /etc/Security/limits.conf
+
+
+==== Increase the Heap Size for ElasticSearch process
+
+* Modif the *jvm.options* file like bellow
+==========================
+admin@sv-elk:~# sudo cat /etc/elasticsearch/jvm.options | grep 'Xm' | grep -v "^#"
+-Xms4g
+-Xmx8g
+==========================
+
+IMPORTANT: ElasticSearch need at least 8Gb of Memory to run well, since I have limited memory on my server i am dedicating a maximum of 8Gb for ElastiSearch.
+
+* Restart the ElastiSearch service
+- sudo systemctl restart elasticsearch.service
+
+
+=== Kibana Installation & Configuration
+
+
+* Execute the bellow command lines:
+- sudo apt install kibana
+- sudo systemctl start kibana
+- sudo systemctl enable kibana
+
+* Install and configure an Nginx as a Reverse Proxy like bellow:
+- sudo apt-get install nginx
+- sudo systemctl enable nginx.service
+- sudo systemctl start nginx.service
+
+
+* Generate a password for the Kibana admin user
+- echo "user@domain.com:`openssl passwd -apr1`" | sudo tee -a /etc/nginx/htpasswd.users
+
+
+* Create the Nginx configuration
+==========================
+admin@sv-elk:~# sudo vim /etc/nginx/sites-available/elk
+server {
+    listen 80;
+
+    server_name YOUR_EXPOSED_IP_HERE;
+
+    auth_basic "Restricted Access";
+    auth_basic_user_file /etc/nginx/htpasswd.users;
+
+    location / {
+        proxy_pass http://localhost:5601;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection 'upgrade';
+        proxy_set_header Host $host;
+        proxy_cache_bypass $http_upgrade;
+    }
+}
+==========================
+
+IMPORTANT: [security] If you server is exposed on internet, you should secure your Kibana using an SSL certificate.
+
+* Apply and check the configuration like bellow:
+- sudo ln -s /etc/nginx/sites-available/elk /etc/nginx/sites-enabled/elk
+- sudo rm -rf /etc/nginx/sites-enabled/default 
+- sudo nginx -t
+- sudo systemctl restart nginx.service 
+
+
+=== Logstash Installation & Configuration
+
+==== Installation
+
+* Execute the command bellow:
+- sudo apt install logstash
+- sudo systemctl start logstash.service 
+- sudo systemctl enable logstash.service 
+
+* Increase the stack size for Logstash depending on your server sizing by modifying the bellow value on the logstash jvm configuration file,
+==========================
+admin@sv-elk:~# sudo vim /etc/logstash/jvm.options
+-Xms2g
+-Xmx4g
+==========================
+
+==== Configuration
+
+* Configure the Logstash Input
+==========================
+admin@sv-elk:~# sudo vim /etc/logstash/conf.d/02-beats-input.conf
+input \{
+  beats \{
+    port => 9999
+  }
+}
+==========================
+
+IMPORTANT: [Security] if your server is exposed on Internet, use a different port number than the default one *5044*
+
+
+* Configure the Filters for system logs
+----
+admin@sv-elk:~# sudo vim /etc/logstash/conf.d/10-syslog-filter.conf
+filter {
+  if [fileset][module] == "system" {
+    if [fileset][name] == "auth"  {
+      grok {
+        match => \{ "message" => ["%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} sshd(?:\[%{POSINT:[system][auth][pid]}\])?: %{DATA:[system][auth][ssh][event]} %{DATA:[system][auth][ssh][method]} for (invalid user )?%{DATA:[system][auth][user]} from %{IPORHOST:[system][auth][ssh][ip]} port %{NUMBER:[system][auth][ssh][port]} ssh2(: %{GREEDYDATA:[system][auth][ssh][signature]})?",
+                  "%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} sshd(?:\[%{POSINT:[system][auth][pid]}\])?: %{DATA:[system][auth][ssh][event]} user %{DATA:[system][auth][user]} from %{IPORHOST:[system][auth][ssh][ip]}",
+                  "%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} sshd(?:\[%{POSINT:[system][auth][pid]}\])?: Did not receive identification string from %{IPORHOST:[system][auth][ssh][dropped_ip]}",
+                  "%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} sudo(?:\[%{POSINT:[system][auth][pid]}\])?: \s*%{DATA:[system][auth][user]} :( %{DATA:[system][auth][sudo][error]} ;)? TTY=%{DATA:[system][auth][sudo][tty]} ; PWD=%{DATA:[system][auth][sudo][pwd]} ; USER=%{DATA:[system][auth][sudo][user]} ; COMMAND=%{GREEDYDATA:[system][auth][sudo][command]}",
+                  "%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} groupadd(?:\[%{POSINT:[system][auth][pid]}\])?: new group: name=%{DATA:system.auth.groupadd.name}, GID=%{NUMBER:system.auth.groupadd.gid}",
+                  "%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} useradd(?:\[%{POSINT:[system][auth][pid]}\])?: new user: name=%{DATA:[system][auth][user][add][name]}, UID=%{NUMBER:[system][auth][user][add][uid]}, GID=%{NUMBER:[system][auth][user][add][gid]}, home=%{DATA:[system][auth][user][add][home]}, shell=%{DATA:[system][auth][user][add][shell]}$",
+                  "%{SYSLOGTIMESTAMP:[system][auth][timestamp]} %{SYSLOGHOST:[system][auth][hostname]} %{DATA:[system][auth][program]}(?:\[%{POSINT:[system][auth][pid]}\])?: %{GREEDYMULTILINE:[system][auth][message]}"] }
+        pattern_definitions => {
+          "GREEDYMULTILINE"=> "(.|\n)*"
+        }
+        remove_field => "message"
+      }
+      date {
+        match => [ "[system][auth][timestamp]", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss" ]
+      }
+      geoip {
+        source => "[system][auth][ssh][ip]"
+        target => "[system][auth][ssh][geoip]"
+      }
+    }
+    else if [fileset][name] == "syslog" {
+      grok {
+        match => { "message" => ["%{SYSLOGTIMESTAMP:[system][syslog][timestamp]} %{SYSLOGHOST:[system][syslog][hostname]} %{DATA:[system][syslog][program]}(?:\[%{POSINT:[system][syslog][pid]}\])?: %{GREEDYMULTILINE:[system][syslog][message]}"] }
+        pattern_definitions => { "GREEDYMULTILINE" => "(.|\n)*" }
+        remove_field => "message"
+      }
+      date {
+        match => [ "[system][syslog][timestamp]", "MMM  d HH:mm:ss", "MMM dd HH:mm:ss" ]
+      }
+    }
+  }
+}
+----
+
+
+* Configure the Ouput
+----
+admin@sv-elk:~# sudo vim /etc/logstash/conf.d/30-elasticsearch-output.conf
+output \{
+  elasticsearch \{
+    hosts => ["localhost:9200"]
+    manage_template => false
+    index => "%{[@metadata][beat]}-%{[@metadata][version]}-%{+YYYY.MM.dd}"
+  }
+}
+----
+
+
+* Test your configuration
+----
+admin@sv-elk:~# sudo -u logstash /usr/share/logstash/bin/logstash --path.settings /etc/logstash -t
+
+Sending Logstash logs to /var/log/logstash which is now configured via log4j2.properties
+Configuration OK
+[2019-04-18T11:05:37,343][INFO ][logstash.runner          ] Using config.test_and_exit mode. Config Validation Result: OK. Exiting Logstash
+----
+
+TIP: [Best Practises] If you want to add filters for other applications that use the Filebeat input, be sure to name the files so they're sorted between the input and the output configuration, meaning that the file names should begin with a two-digit number between 02 and 30.
+
+
+=== Filebeat Installation & Configuration
+
+
+[NOTE] 
+In my case i need the Filebeat module to be able to send log files to the Elastic Stack
+
+* Execute the bellow command line
+- sudo apt install filebeat
+
+
+* Comment the ElastiSearch output and enable the Logstash output like bellow:
+----
+admin@sv-elk:~# sudo nano /etc/filebeat/filebeat.yml
+#----------------------------- Logstash output --------------------------------
+output.logstash:
+  # The Logstash hosts
+  hosts: ["localhost:9999"]
+----
+
+
+*Load the Template:
+- sudo filebeat setup --template -E output.logstash.enabled=false -E 'output.elasticsearch.hosts=["localhost:9200"]'
+
+
+* Load the Dashboard:
+sudo filebeat setup -e -E output.logstash.enabled=false -E output.elasticsearch.hosts=['localhost:9200'] -E setup.kibana.host=localhost:5601
+
+
+* start and enable the service:
+- sudo systemctl start filebeat
+- sudo systemctl enable filebeat
+
+
+* Test the conf:
+- sudo curl -XGET 'http://localhost:9200/filebeat-*/_search?pretty'
+
+TIP: This will return for you the hits associated to that search.
+
+
+=== Metricbeat Installation & Configuration
+
+
+[NOTE]
+In my case I need the Metricbeat module to be able to send system and service metric to the Elastic Stack
+
+
+* Execute the bellow command line:
+- apt-get install metricbeat
+
+* Comment the ElastiSearch output and enable the Logstash output like bellow:
+----
+admin@sv-elk:~# sudo vim /etc/metricbeat/metricbeat.yml
+#----------------------------- Logstash output --------------------------------
+output.logstash:
+  # The Logstash hosts
+  hosts: ["localhost:9999"]
+----
+
+* Load the Template:
+- sudo metricbeat setup --template -E output.logstash.enabled=false -E 'output.elasticsearch.hosts=["localhost:9200"]'
+
+* Load the Dashboard:
+- sudo metricbeat setup -e -E output.logstash.enabled=false -E output.elasticsearch.hosts=['localhost:9200'] -E setup.kibana.host=localhost:5601
+
+* Test the configuration:
+- sudo curl -XGET 'http://localhost:9200/metricbeat-*/_search?pretty'
+
+TIP: This will return for you the hits associated to that search.
+
+
+== Client installation and configuration
+
+
+=== Metricbeat to send system Metrics
+
+* Execute the bellow command lines:
+- sudo wget -qO - https://artifacts.elastic.co/GPG-KEY-elasticsearch | sudo apt-key add -
+- echo "deb https://artifacts.elastic.co/packages/6.x/apt stable main" | sudo tee -a /etc/apt/sources.list.d/elastic-6.x.list
+- sudo apt-get update
+- sudo apt-get install metricbeat
+
+
+* Configure Metricbeat output like bellow:
+----
+admin@sv-elk:~# sudo vim /etc/metricbeat/metricbeat.yml 
+#----------------------------- Logstash output --------------------------------
+output.logstash:
+  # The Logstash hosts
+  hosts: ["YOUR_ELASTICK_STACK_IP:9999"]
+----
+
+
+* by default only the metricbeat system module is enabled:
+----
+admin@sv-elk:~# sudo metricbeat modules list
+Enabled:
+system
+
+Disabled:
+aerospike
+apache
+ceph
+couchbase
+docker
+dropwizard
+elasticsearch
+envoyproxy
+etcd
+golang
+graphite
+haproxy
+http
+jolokia
+kafka
+kibana
+kubernetes
+kvm
+logstash
+memcached
+mongodb
+munin
+mysql
+nginx
+php_fpm
+postgresql
+prometheus
+rabbitmq
+redis
+traefik
+uwsgi
+vsphere
+windows
+zookeeper
+----
+
+* Enable and Start the service
+- sudo systemctl enable metricbeat
+- sudo systemctl start  metricbeat
+
+TIP: Each time you install and configure MetricBeat plugin on a client, you should be able to see the new client system monitoring via: http://IP_Elastic_Stack/app/kibana#/dashboard/Metricbeat-system-overview
