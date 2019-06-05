@@ -1573,13 +1573,297 @@ sudo systemctl start  metricbeat
 </div>
 </div>
 </div>
+<div class="sect1">
+<h2 id="_system_monitoring_using_elastalert">System Monitoring using ElastAlert</h2>
+<div class="sectionbody">
+<div class="ulist"><ul>
+<li>
+<p>
+Supposing that you configured some system to send there system metric using Metricbeat to the Elastic Stack.
+</p>
+</li>
+</ul></div>
+<div class="sect2">
+<h3 id="_elastalert_installation">ElastAlert installation</h3>
+<div class="ulist"><ul>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/# sudo apt-get install python-pip
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/# sudo apt-get install libffi-dev
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/# sudo apt-get install libssl-dev
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/# cd /opt/
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt# git clone <a href="https://github.com/Yelp/elastalert.git">https://github.com/Yelp/elastalert.git</a>
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt# sudo pip install "setuptools&gt;=11.3"
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt# sudo pip install PyOpenSSL
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt# cd elastalert/
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt/elastalert# sudo python setup.py install
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt/elatsalert# sudo cp config.yaml.example config.yaml
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt/elastalert# sudo mkdir rules
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt/elastalert# cat config.yaml | grep es_host | grep -v "^#"
+es_host: localhost
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt/elastalert# cat config.yaml | grep rules_folder
+rules_folder: rules
+</p>
+</li>
+<li>
+<p>
+<a href="mailto:admin@sv-elk">admin@sv-elk</a>:/opt/elastalert# sudo elastalert-create-index
+</p>
+</li>
+</ul></div>
+<div class="paragraph"><p>Enter Elasticsearch host: localhost</p></div>
+<div class="paragraph"><p>Enter Elasticsearch port: 9200</p></div>
+<div class="paragraph"><p>Use SSL? t/f: f</p></div>
+<div class="paragraph"><p>Enter optional basic-auth username (or leave blank):</p></div>
+<div class="paragraph"><p>Enter optional basic-auth password (or leave blank):</p></div>
+<div class="paragraph"><p>Enter optional Elasticsearch URL prefix (prepends a string to the URL of every request):</p></div>
+<div class="paragraph"><p>New index name? (Default elastalert_status)</p></div>
+<div class="paragraph"><p>Name of existing index to copy? (Default None)</p></div>
+<div class="paragraph"><p>Elastic Version:6</p></div>
+<div class="paragraph"><p>Mapping used for string:{<em>type</em>: <em>keyword</em>}</p></div>
+<div class="paragraph"><p>New index elastalert_status created</p></div>
+<div class="paragraph"><p>Done!</p></div>
+</div>
+<div class="sect2">
+<h3 id="_memory_alert_rule">Memory alert rule</h3>
+<div class="listingblock">
+<div class="content">
+<pre><code>root@sv-elk:/opt/elastalert/rules# pwd
+/opt/elastalert/rules
+root@sv-elk:/opt/elastalert/rules# cat SERVER_NAME_RAM.yaml
+name: SERVER_NAME Memory Alert
+
+es_host: localhost
+
+es_port: 9200
+
+type: frequency
+
+index: metricbeat-*
+
+num_events: 3
+
+timeframe:
+  minutes: 1
+
+
+filter:
+ - query_string:
+     query: 'system.memory.actual.used.pct:&gt;0.1 AND beat.hostname:"ba3aw-uniris"'
+
+alert:
+- "email"
+
+smtp_host: smtp.gmail.com
+smtp_port: 465
+smtp_ssl : true
+from_addr: elastalert.upwork@gmail.com
+smtp_auth_file: /opt/elastalert/smtp_auth_file.yml
+
+
+email:
+- "abdelkarim@gmail.com"
+root@sv-elk:/opt/elastalert/rules# vim SERVER_NAME_RAM.yaml
+root@sv-elk:/opt/elastalert/rules# pwd
+/opt/elastalert/rules
+root@sv-elk:/opt/elastalert/rules# ls
+SERVER_NAME_RAM.yaml
+root@sv-elk:/opt/elastalert/rules# cat SERVER_NAME_RAM.yaml
+name: SERVER_NAME Memory Alert
+
+es_host: localhost
+
+es_port: 9200
+
+type: frequency
+
+index: metricbeat-*
+
+num_events: 3
+
+timeframe:
+  minutes: 1
+
+
+filter:
+ - query_string:
+     query: 'system.memory.actual.used.pct:&gt;0.1 AND beat.hostname:"ba3aw-uniris"'
+
+alert:
+- "email"
+
+smtp_host: smtp.gmail.com
+smtp_port: 465
+smtp_ssl : true
+from_addr: SenderEmail@gmail.com
+smtp_auth_file: /opt/elastalert/smtp_auth_file.yml
+
+
+email:
+- "youremail@yourdomain.com"
+
+root@sv-elk:/opt/elastalert/rules# cat /opt/elastalert/smtp_auth_file.yml
+user: "SenderEmail@gmail.com"
+password: "SenderPasswordHere"</code></pre>
+</div></div>
+<div class="ulist"><ul>
+<li>
+<p>
+To test the rule execute the bellow command:
+</p>
+</li>
+</ul></div>
+<div class="listingblock">
+<div class="content">
+<pre><code>root@sv-elk:/opt/elastalert# elastalert-test-rule rules/SERVER_NAME_RAM.yaml
+Successfully loaded SERVER_NAME Memory Alert
+
+INFO:elastalert:Queried rule SERVER_NAME Memory Alert from 2019-05-07 13:43 UTC to 2019-05-07 13:44 UTC: 6 / 6 hits
+INFO:elastalert:Alert for SERVER_NAME Memory Alert at 2019-05-07T13:43:49.122Z:
+INFO:elastalert:SERVER_NAME Memory Alert
+
+At least 3 events occurred between 2019-05-07 13:42 UTC and 2019-05-07 13:43 UTC
+
+@timestamp: 2019-05-07T13:43:49.122Z
+@version: 1
+_id: sliJkmoBLrArKgaMQ_cC
+_index: metricbeat-6.7.1-2019.05.07
+_type: doc
+beat: {
+    "hostname": "ba3aw-uniris",
+    "name": "ba3aw-uniris",
+    "version": "6.7.1"
+}
+event: {
+    "dataset": "system.memory",
+    "duration": 566183
+}
+host: {
+    "architecture": "x86_64",
+    "containerized": false,
+    "id": "317607ec27d04327918a7bb2d99336b9",
+    "name": "ba3aw-uniris",
+    "os": {
+        "codename": "xenial",
+        "family": "debian",
+        "name": "Ubuntu",
+        "platform": "ubuntu",
+        "version": "16.04.5 LTS (Xenial Xerus)"
+    }
+}
+metricset: {
+    "module": "system",
+    "name": "memory",
+    "rtt": 566
+}
+num_hits: 6
+num_matches: 2
+system: {
+    "memory": {
+        "actual": {
+            "free": 5230510080,
+            "used": {
+                "bytes": 2760216576,
+                "pct": 0.3454
+            }
+        },
+        "free": 3711860736,
+        "hugepages": {
+            "default_size": 2097152,
+            "free": 0,
+            "reserved": 0,
+            "surplus": 0,
+            "total": 0,
+            "used": {
+                "bytes": 0,
+                "pct": 0
+            }
+        },
+        "swap": {
+            "free": 1023930368,
+            "total": 1023930368,
+            "used": {
+                "bytes": 0,
+                "pct": 0
+            }
+        },
+        "total": 7990726656,
+        "used": {
+            "bytes": 4278865920,
+            "pct": 0.5355
+        }
+    }
+}
+tags: [
+    "beats_input_raw_event"
+]
+
+INFO:elastalert:Ignoring match for silenced rule SERVER_NAME Memory Alert
+
+Would have written the following documents to writeback index (default is elastalert_status):
+
+silence - {'rule_name': 'SERVER_NAME Memory Alert', '@timestamp': datetime.datetime(2019, 5, 7, 13, 44, 24, 857855, tzinfo=tzutc()), 'exponent': 0, 'until': datetime.datetime(2019, 5, 7, 13, 45, 24, 857847, tzinfo=tzutc())}
+
+elastalert_status - {'hits': 6, 'matches': 2, '@timestamp': datetime.datetime(2019, 5, 7, 13, 44, 24, 862092, tzinfo=tzutc()), 'rule_name': 'SERVER_NAME Memory Alert', 'starttime': datetime.datetime(2019, 5, 7, 13, 43, 24, 241722, tzinfo=tzutc()), 'endtime': datetime.datetime(2019, 5, 7, 13, 44, 24, 841722, tzinfo=tzutc()), 'time_taken': 0.01503300666809082}</code></pre>
+</div></div>
+</div>
+</div>
+</div>
 </div>
 <div id="footnotes"><hr /></div>
 <div id="footer">
 <div id="footer-text">
 Version V1.0.0<br />
 Last updated
- 2019-04-22 23:22:32 CEST
+ 2019-05-07 15:47:11 CEST
 </div>
 </div>
 </body>
